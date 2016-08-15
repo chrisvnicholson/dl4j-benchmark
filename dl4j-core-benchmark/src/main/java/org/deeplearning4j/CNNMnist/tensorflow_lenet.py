@@ -72,7 +72,7 @@ def _inference(images, use_cudnn):
     util.LOGGER.debug("Build Model")
     with tf.variable_scope('cnn1') as scope:
         images = tf.reshape(images, [FLAGS.batch_size, HEIGHT, WIDTH,  CHANNELS])
-        kernel = util.init_weights([5, 5, CHANNELS, depth1], FLAGS.seed, FLAGS.batch_size)
+        kernel = util.init_weights([5, 5, CHANNELS, FLAGS.ccn_depth1], FLAGS.seed, FLAGS.batch_size)
         conv = tf.nn.conv2d(images, kernel, [1, 1, 1, 1], "VALID", data_format= util.DATA_FORMAT,
                             use_cudnn_on_gpu=use_cudnn) #VALID no padding
         biases = util.init_bias([FLAGS.ccn_depth1])
@@ -80,7 +80,7 @@ def _inference(images, use_cudnn):
     pool1 = tf.nn.max_pool(conv1, ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1], padding='VALID',
                            data_format=util.DATA_FORMAT, name='maxpool1')
     with tf.variable_scope('cnn2') as scope:
-        kernel = util.init_weights([5, 5, depth1, depth2], FLAGS.seed, FLAGS.batch_size)
+        kernel = util.init_weights([5, 5, FLAGS.ccn_depth1, FLAGS.ccn_depth2], FLAGS.seed, FLAGS.batch_size)
         conv = tf.nn.conv2d(pool1, kernel, [1, 1, 1, 1], "VALID", data_format=util.DATA_FORMAT,
                             use_cudnn_on_gpu=use_cudnn)
         biases = util.init_bias([FLAGS.ccn_depth2])
