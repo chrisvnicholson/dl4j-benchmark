@@ -64,7 +64,6 @@ tf.app.flags.DEFINE_float('l2', 1e-4, 'Weight decay.')
 tf.app.flags.DEFINE_float('decay_rate', 1e-3, 'Learning rate decay rate.')
 tf.app.flags.DEFINE_float('policy_power', 0.75, 'Policy power.') # current inverse_time_decay is missing this as part of denom calc
 tf.app.flags.DEFINE_integer('seed', 42, 'Random seed.')
-tf.app.flags.DEFINE_boolean('fp16', False, 'Use fp16.')
 
 
 def _inference(images, use_cudnn):
@@ -321,21 +320,23 @@ def run(core_type="CPU"):
     total_time = time.time()
 
     data_load_time = time.time()
-    data_sets = util.load_data(input_data, ONE_HOT, core_type, FLAGS.fp16)
+    data_sets = util.load_data(input_data, ONE_HOT, core_type)
     # if core_type == "MULTI": data_sets = tf.split(0, FLAGS.num_gpus, data_sets.train)
     data_load_time = time.time() - data_load_time
 
     num_gpus = util.NUM_GPUS[core_type]
     use_cudnn = True if (core_type != "CPU") else False
 
+    data = tf.cast(data_sets.train, util.DTYPE)
     if core_type != 'MULTI':
-        sess, logits, images_placeholder, labels_placeholder, train_time = run_training(data_sets.train, num_gpus, use_cudnn)
+        sess, logits, images_placeholder, labels_placeholder, train_time = run_training(data, num_gpus, use_cudnn)
     else:
-        sess, train_time, images_placeholder, labels_placeholder = run_multi_training(data_sets.train, num_gpus, use_cudnn)
+        sess, train_time, images_placeholder, labels_placeholder = run_multi_training(data, num_gpus, use_cudnn)
         logits = _inference(images_placeholder, use_cudnn)
 
     test_time = time.time()
-    util.do_eval(sess, logits, images_placeholder, labels_placeholder, data_sets.test, ONE_HOT, FLAGS.test_iter, FLAGS.batch_size)
+    data = tf.cast(data_sets.test, util.DTYPE)
+    util.do_eval(sess, logits, images_placeholder, labels_placeholder, data, ONE_HOT, FLAGS.test_iter, FLAGS.batch_size)
     test_time = time.time() - test_time
     sess.close
 

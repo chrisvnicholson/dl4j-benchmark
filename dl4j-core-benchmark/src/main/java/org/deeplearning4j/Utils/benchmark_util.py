@@ -28,13 +28,13 @@ ch.setFormatter(formatter)
 # add ch to logger
 LOGGER.addHandler(ch)
 
-def load_data(input_data, one_hot, core_type, fp16=False):
+def load_data(input_data, one_hot, core_type):
     if(one_hot is False):
         data = input_data.read_data_sets(DATA_DIR)
     else:
         data = input_data.read_data_sets(DATA_DIR, one_hot=True)
     # if (core_type != "CPU" and not fp16): tf.cast(data.uint8image, tf.float32)
-    return tf.cast(data, DTYPE)
+    return data
 
 
 def placeholder_inputs(one_hot, num_pixels, num_classes):
