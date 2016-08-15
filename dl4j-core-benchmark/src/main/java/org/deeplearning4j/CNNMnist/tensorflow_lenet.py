@@ -51,6 +51,8 @@ FLAGS = tf.app.flags.FLAGS
 # max_iteration = (epochs * numExamples)/batchSize (11 * 60000)/66
 tf.app.flags.DEFINE_integer('max_iter', 9000, 'Number of iterations to run trainer.')
 tf.app.flags.DEFINE_integer('test_iter', 100, 'Number of iterations to run trainer.')
+tf.app.flags.DEFINE_integer('ccn_depth1', 20, 'Number of units in feed forward layer 1.')
+tf.app.flags.DEFINE_integer('ccn_depth2', 50, 'Number of units in feed forward layer 1.')
 tf.app.flags.DEFINE_integer('ffn1', 500, 'Number of units in feed forward layer 1.')
 tf.app.flags.DEFINE_integer('batch_size', 100, 'Batch size. Must divide evenly into the dataset sizes.')
 tf.app.flags.DEFINE_string('train_dir', 'data', 'Directory to put the training data.')
@@ -71,20 +73,18 @@ def _inference(images, use_cudnn):
     util.LOGGER.debug("Build Model")
     with tf.variable_scope('cnn1') as scope:
         images = tf.reshape(images, [FLAGS.batch_size, HEIGHT, WIDTH,  CHANNELS])
-        depth1 = 20
         kernel = util.init_weights([5, 5, CHANNELS, depth1], FLAGS.seed, FLAGS.batch_size)
         conv = tf.nn.conv2d(images, kernel, [1, 1, 1, 1], "VALID", data_format= util.DATA_FORMAT,
                             use_cudnn_on_gpu=use_cudnn) #VALID no padding
-        biases = tf.Variable(tf.zeros([depth1], dtype=util.DTYPE), name='biases')
+        biases = util.init_bias([FLAGS.ccn_depth1])
         conv1 = tf.nn.bias_add(conv, biases, name=scope.name, data_format=util.DATA_FORMAT)
     pool1 = tf.nn.max_pool(conv1, ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1], padding='VALID',
                            data_format=util.DATA_FORMAT, name='maxpool1')
     with tf.variable_scope('cnn2') as scope:
-        depth2 = 50
         kernel = util.init_weights([5, 5, depth1, depth2], FLAGS.seed, FLAGS.batch_size)
         conv = tf.nn.conv2d(pool1, kernel, [1, 1, 1, 1], "VALID", data_format=util.DATA_FORMAT,
                             use_cudnn_on_gpu=use_cudnn)
-        biases = tf.Variable(tf.zeros([depth2], dtype=util.DTYPE), name='biases')
+        biases = util.init_bias([FLAGS.ccn_depth2])
         conv2 = tf.nn.bias_add(conv, biases, name=scope.name, data_format=util.DATA_FORMAT)
     pool2 = tf.nn.max_pool(conv2, ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1], padding='VALID',
                            data_format=util.DATA_FORMAT, name='maxpool2')
@@ -92,12 +92,11 @@ def _inference(images, use_cudnn):
         reshape = tf.reshape(pool2, [FLAGS.batch_size, -1])
         dim = reshape.get_shape()[1].value
         weights = util.init_weights([dim, FLAGS.ffn1], FLAGS.seed, FLAGS.batch_size)
-        biases = tf.Variable(tf.zeros([FLAGS.ffn1], dtype=util.DTYPE), name='biases')
+        biases = util.init_bias([FLAGS.ffn1])
         hidden1 = tf.nn.relu(tf.matmul(reshape, weights) + biases, name=scope.name)
-
     with tf.variable_scope('softmax_linear') as scope:
         weights = util.init_weights([FLAGS.ffn1, NUM_CLASSES], FLAGS.seed, FLAGS.batch_size)
-        biases = tf.Variable(tf.zeros([NUM_CLASSES], dtype=util.DTYPE), name='biases')
+        biases = util.init_bias([NUM_CLASSES])
         logits = tf.nn.softmax(tf.add(tf.matmul(hidden1, weights), biases, name=scope.name))
     return logits
 
@@ -255,6 +254,7 @@ def run_multi_training(data, num_gpus, use_cudnn):
 
                     # Calculate the gradients for the batch of data on this tower.
                     grads = opt.compute_gradients(loss)
+                    # grads = opt.compute_gradients(loss, tf.get_collection(tf.GraphKeys.SUMMARIES, scope))
                     print("TOWER GRADS*******", grads)
 
                     # Keep track of the gradients across all towers.

@@ -34,8 +34,7 @@ def load_data(input_data, one_hot, core_type, fp16=False):
     else:
         data = input_data.read_data_sets(DATA_DIR, one_hot=True)
     # if (core_type != "CPU" and not fp16): tf.cast(data.uint8image, tf.float32)
-    if (fp16): tf.cast(data, tf.float16)
-    return data
+    return tf.cast(data, DTYPE)
 
 
 def placeholder_inputs(one_hot, num_pixels, num_classes):
@@ -58,6 +57,9 @@ def fill_feed_dict(data_set, images_pl, labels_pl, batch_size):
     }
     return feed_dict
 
+def init_bias(shape):
+    with tf.device(DEVICE):
+        return tf.get_variable(tf.zeros(shape, dtype=DTYPE), name='biases')
 
 def init_weights(shape, seed, l2):
     with tf.device(DEVICE):
