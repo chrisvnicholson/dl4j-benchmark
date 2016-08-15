@@ -67,6 +67,14 @@ tf.app.flags.DEFINE_float('policy_power', 0.75, 'Policy power.') # current inver
 tf.app.flags.DEFINE_integer('seed', 42, 'Random seed.')
 tf.app.flags.DEFINE_boolean('log_device_placement', False, """Whether to log device placement.""")
 
+def _activation_summary(x):
+    """Helper to create summaries for activations.
+    Creates a summary that provides a histogram of activations.
+    Creates a summary that measures the sparsity of activations.
+    """
+    tensor_name = re.sub('%s_[0-9]*/' % TOWER_NAME, '', x.op.name)
+    tf.histogram_summary(tensor_name + '/activations', x)
+    tf.scalar_summary(tensor_name + '/sparsity', tf.nn.zero_fraction(x))
 
 def _inference(images, use_cudnn):
     """Build the MNIST model up to where it may be used for inference.
@@ -80,6 +88,7 @@ def _inference(images, use_cudnn):
         biases = util.init_bias([FLAGS.ccn_depth1])
         # bias = tf.nn.bias_add(conv, biases, data_format=util.DATA_FORMAT)
         conv1 = tf.identity(tf.nn.bias_add(conv, biases, data_format=util.DATA_FORMAT), name=scope.name)
+        _activation_summary(conv1)
     pool1 = tf.nn.max_pool(conv1, ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1], padding='VALID',
                            data_format=util.DATA_FORMAT, name='maxpool1')
     with tf.variable_scope('cnn2') as scope:
@@ -89,6 +98,7 @@ def _inference(images, use_cudnn):
         biases = util.init_bias([FLAGS.ccn_depth2])
         # bias = tf.nn.bias_add(conv, biases, data_format=util.DATA_FORMAT)
         conv2 = tf.identity(tf.nn.bias_add(conv, biases, data_format=util.DATA_FORMAT), name=scope.name)
+        _activation_summary(conv2)
     pool2 = tf.nn.max_pool(conv2, ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1], padding='VALID',
                            data_format=util.DATA_FORMAT, name='maxpool2')
     with tf.variable_scope('ffn1') as scope:
@@ -96,12 +106,14 @@ def _inference(images, use_cudnn):
         dim = reshape.get_shape()[1].value
         weights = util.init_weights([dim, FLAGS.ffn1], FLAGS.seed, FLAGS.batch_size)
         biases = util.init_bias([FLAGS.ffn1])
-        hidden1 = tf.nn.relu(tf.matmul(reshape, weights) + biases, name=scope.name)
+        ffn1 = tf.nn.relu(tf.matmul(reshape, weights) + biases, name=scope.name)
+        _activation_summary(ffn1)
     with tf.variable_scope('softmax_linear') as scope:
         weights = util.init_weights([FLAGS.ffn1, NUM_CLASSES], FLAGS.seed, FLAGS.batch_size)
         biases = util.init_bias([NUM_CLASSES])
-        logits = tf.nn.softmax(tf.add(tf.matmul(hidden1, weights), biases, name=scope.name))
-    return logits
+        softmax_linear = tf.nn.softmax(tf.add(tf.matmul(ffn1, weights), biases, name=scope.name))
+        _activation_summary(softmax_linear)
+    return softmax_linear
 
 
 def _setup_loss(logits, labels):
@@ -111,6 +123,7 @@ def _setup_loss(logits, labels):
     labels = tf.to_int32(labels) if(ONE_HOT is False and util.DTYPE == tf.float32) else labels
     cross_entropy = tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(logits, labels, name='xentropy') if(ONE_HOT is False) else
                                    tf.nn.softmax_cross_entropy_with_logits(logits, labels, name='xentropy'))
+
     if FLAGS.core_type != "MULTI":
         tf.scalar_summary(cross_entropy.op.name, cross_entropy)
     else:
@@ -149,18 +162,9 @@ def run_training(train_data, num_gpus, use_cudnn):
 '''
 Multi-GPUs
 '''
-def tower_loss(data, scope, use_cudnn):
+def tower_loss(scope):
     """Calculate the total loss on a single tower running the CIFAR model.
     """
-    images, labels = data.next_batch(FLAGS.batch_size)
-
-    # Build inference Graph.
-    logits = _inference(tf.cast(images, util.DTYPE), use_cudnn)
-
-    # Build the portion of the Graph calculating the losses. Note that we will
-    # assemble the total_loss using a custom function below.
-    _ = _setup_loss(logits, labels)
-
     # Assemble all of the losses for the current tower only.
     losses = tf.get_collection('losses', scope)
 
@@ -174,8 +178,6 @@ def tower_loss(data, scope, use_cudnn):
     # Attach a scalar summary to all individual losses and the total loss; do the
     # same for the averaged version of the losses.
     for l in losses + [total_loss]:
-        # Remove 'tower_[0-9]/' from the name in case this is a multi-GPU training
-        # session. This helps the clarity of presentation on tensorboard.
         loss_name = re.sub('%s_[0-9]*/' % TOWER_NAME, '', l.op.name)
 
         # Name each loss as '(raw)' and name the moving average version of the loss
@@ -217,9 +219,7 @@ def average_gradients(tower_grads):
 def run_multi_training(data, num_gpus, use_cudnn):
     """Train for a number of iterations."""
     with tf.Graph().as_default(), tf.device('/cpu:0'):
-        # Create a variable to count the number of train() calls. This equals the
-        # number of batches processed * FLAGS.num_gpus.
-        images_placeholder, labels_placeholder = util.placeholder_inputs(ONE_HOT, IMAGE_PIXELS, NUM_CLASSES)
+        # Create a variable to count the number of train() calls.
 
         global_step = tf.get_variable('global_step', [],
                                       initializer=tf.constant_initializer(0), trainable=False)
@@ -236,13 +236,21 @@ def run_multi_training(data, num_gpus, use_cudnn):
                                         staircase=True)
 
         # Create an optimizer that performs gradient descent.
-        # opt = tf.train.MomentumOptimizer(lr, FLAGS.momentum)
-        opt = tf.train.GradientDescentOptimizer(lr)
+        opt = tf.train.MomentumOptimizer(lr, FLAGS.momentum)
+        # opt = tf.train.GradientDescentOptimizer(lr)
         # Calculate the gradients for each model tower.
         tower_grads = []
         for i in xrange(num_gpus):
             with tf.device('/gpu:%d' % i):
                 with tf.name_scope('%s_%d' % (TOWER_NAME, i)) as scope:
+                    images, labels = data.next_batch(FLAGS.batch_size)
+
+                    # Build inference Graph.
+                    logits = _inference(tf.cast(images, util.DTYPE), use_cudnn)
+
+                    # Build the portion of the Graph calculating the losses. Note that we will
+                    # assemble the total_loss using a custom function below.
+                    _ = _setup_loss(logits, labels)
 
                     # Calculate the loss for one tower. One model constructed per tower and variables shared across
                     loss = tower_loss(data, scope, use_cudnn)
@@ -302,7 +310,6 @@ def run_multi_training(data, num_gpus, use_cudnn):
         train_time = time.time()
         util.LOGGER.debug("Train Model")
         for iter in xrange(FLAGS.max_iter):
-            # feed_dict = util.fill_feed_dict(data, images_placeholder, labels_placeholder)
             _, loss_value = sess.run([train_op, loss])
 
             if iter % 100 == 0: util.LOGGER.debug('Iter %d: loss = %.2f' % (iter, loss_value))
@@ -315,7 +322,7 @@ def run_multi_training(data, num_gpus, use_cudnn):
     assert not np.isnan(loss_value), 'Model diverged with loss = NaN'
 
     train_time = time.time() - train_time
-    return sess, train_time, images_placeholder, labels_placeholder
+    return sess, train_time
 
 
 def run():
@@ -331,7 +338,8 @@ def run():
     if FLAGS.core_type != 'MULTI':
         sess, logits, images_placeholder, labels_placeholder, train_time = run_training(data_sets.train, num_gpus, use_cudnn)
     else:
-        sess, train_time, images_placeholder, labels_placeholder = run_multi_training(data_sets.train, num_gpus, use_cudnn)
+        sess, train_time = run_multi_training(data_sets.train, num_gpus, use_cudnn)
+        images_placeholder, labels_placeholder = util.placeholder_inputs(ONE_HOT, IMAGE_PIXELS, NUM_CLASSES)
         logits = _inference(images_placeholder, use_cudnn)
 
     test_time = time.time()
