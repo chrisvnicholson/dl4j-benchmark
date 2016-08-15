@@ -86,7 +86,7 @@ def evaluation_topk(logits, labels):
 
 def prediction(logits, labels):
     correct_pred = tf.equal(tf.argmax(logits, 1), tf.argmax(labels, 1))
-    return tf.reduce_sum(tf.cast(correct_pred, tf.float32), 0)
+    return tf.reduce_sum(tf.cast(correct_pred, DTYPE), 0)
 
 
 # TODO params are ugly - need to condense in container or turn into class

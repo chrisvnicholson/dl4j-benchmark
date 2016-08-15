@@ -45,7 +45,7 @@ NUM_EXAMPLES_PER_EPOCH_FOR_EVAL = 10000
 MOVING_AVERAGE_DECAY = 0.9999     # The decay to use for the moving average.
 NUM_EPOCHS_PER_DECAY = 350.0
 
-TOWER_NAME = 'tower'
+TOWER_NAME = 'lenet_tower'
 
 FLAGS = tf.app.flags.FLAGS
 # max_iteration = (epochs * numExamples)/batchSize (11 * 60000)/66
@@ -236,7 +236,7 @@ def run_multi_training(data, num_gpus, use_cudnn):
                                         staircase=True)
 
         # Create an optimizer that performs gradient descent.
-        opt = tf.train.MomentumOptimizer(lr, FLAGS.momentum)
+        opt = tf.train.MomentumOptimizer(FLAGS.learning_rate, FLAGS.momentum)
         # opt = tf.train.GradientDescentOptimizer(lr)
         # Calculate the gradients for each model tower.
         tower_grads = []
@@ -253,7 +253,7 @@ def run_multi_training(data, num_gpus, use_cudnn):
                     _ = _setup_loss(logits, labels)
 
                     # Calculate the loss for one tower. One model constructed per tower and variables shared across
-                    loss = tower_loss(data, scope, use_cudnn)
+                    loss = tower_loss(scope)
 
                     # Reuse variables for the next tower.
                     tf.get_variable_scope().reuse_variables()
@@ -337,15 +337,23 @@ def run():
 
     if FLAGS.core_type != 'MULTI':
         sess, logits, images_placeholder, labels_placeholder, train_time = run_training(data_sets.train, num_gpus, use_cudnn)
+        test_time = time.time()
+        util.do_eval(sess, logits, images_placeholder, labels_placeholder, data_sets.test, ONE_HOT, FLAGS.test_iter, FLAGS.batch_size)
+        test_time = time.time() - test_time
     else:
         sess, train_time = run_multi_training(data_sets.train, num_gpus, use_cudnn)
-        images_placeholder, labels_placeholder = util.placeholder_inputs(ONE_HOT, IMAGE_PIXELS, NUM_CLASSES)
-        logits = _inference(images_placeholder, use_cudnn)
+        correct_count = 0
+        with tf.Graph().as_default() as g:
+            variable_averages = tf.train.ExponentialMovingAverage(
+                    cifar10.MOVING_AVERAGE_DECAY)
+            variables_to_restore = variable_averages.variables_to_restore()
+        for _ in xrange(FLAGS.test_iter):
+            images, labels = data_sets.test.next_batch(FLAGS.batch_size)
+            logits = _inference(images, use_cudnn)
+            correct_pred = tf.equal(tf.argmax(logits, 1), tf.argmax(labels, 1))
+            correct_count += sess.run(tf.reduce_sum(tf.cast(correct_pred, util.DTYPE), 0))
+    print("Accuracy: %.2f" % ((correct_count / data_sets.test.num_examples) * 100))
 
-    test_time = time.time()
-    data_sets.test
-    util.do_eval(sess, logits, images_placeholder, labels_placeholder, data_sets.test, ONE_HOT, FLAGS.test_iter, FLAGS.batch_size)
-    test_time = time.time() - test_time
     sess.close
 
     total_time = time.time() - total_time
