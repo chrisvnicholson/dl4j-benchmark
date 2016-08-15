@@ -58,7 +58,7 @@ def fill_feed_dict(data_set, images_pl, labels_pl, batch_size):
 
 def init_bias(shape):
     with tf.device(DEVICE):
-        return tf.get_variable(tf.zeros(shape, dtype=DTYPE), name='biases')
+        return tf.get_variable('biases', shape, initializer=tf.constant_initializer(0.0), dtype=DTYPE)
 
 def init_weights(shape, seed, l2):
     with tf.device(DEVICE):
