@@ -180,7 +180,6 @@ def tower_loss(data, scope):
         # Name each loss as '(raw)' and name the moving average version of the loss
         tf.scalar_summary(loss_name +' (raw)', l)
         tf.scalar_summary(loss_name, loss_averages.average(l))
-    pdb.set_trace()
     with tf.control_dependencies([loss_averages_op]):
         total_loss = tf.identity(total_loss)
     return total_loss
@@ -189,7 +188,6 @@ def tower_loss(data, scope):
 def average_gradients(tower_grads):
     """Calculate the average gradient for each shared variable across all towers.
     """
-    print("TOWER GRADS AVG*******", tower_grads)
     average_grads = []
     for grad_and_vars in zip(*tower_grads):
         # Note that each grad_and_vars looks like the following:
@@ -211,7 +209,6 @@ def average_gradients(tower_grads):
         # the Variable.
         v = grad_and_vars[0][1]
         grad_and_var = (grad, v)
-        pdb.set_trace()
         average_grads.append(grad_and_var)
     return average_grads
 
@@ -258,7 +255,7 @@ def run_multi_training(data, num_gpus, use_cudnn):
                     # Calculate the gradients for the batch of data on this tower.
                     grads = opt.compute_gradients(loss)
                     # grads = opt.compute_gradients(loss, tf.get_collection(tf.GraphKeys.SUMMARIES, scope))
-                    print("TOWER GRADS*******", grads)
+                    # print("TOWER GRADS*******", grads)
 
                     # Keep track of the gradients across all towers.
                     tower_grads.append(grads)
