@@ -65,6 +65,7 @@ tf.app.flags.DEFINE_float('l2', 1e-4, 'Weight decay.')
 tf.app.flags.DEFINE_float('decay_rate', 1e-3, 'Learning rate decay rate.')
 tf.app.flags.DEFINE_float('policy_power', 0.75, 'Policy power.') # current inverse_time_decay is missing this as part of denom calc
 tf.app.flags.DEFINE_integer('seed', 42, 'Random seed.')
+tf.app.flags.DEFINE_boolean('log_device_placement', False, """Whether to log device placement.""")
 
 
 def _inference(images, use_cudnn):
@@ -77,8 +78,8 @@ def _inference(images, use_cudnn):
         conv = tf.nn.conv2d(images, kernel, [1, 1, 1, 1], "VALID", data_format= util.DATA_FORMAT,
                             use_cudnn_on_gpu=use_cudnn) #VALID no padding
         biases = util.init_bias([FLAGS.ccn_depth1])
-        bias = tf.nn.bias_add(conv, biases, data_format=util.DATA_FORMAT)
-        conv1 = tf.identity(bias, name=scope.name)
+        # bias = tf.nn.bias_add(conv, biases, data_format=util.DATA_FORMAT)
+        conv1 = tf.identity(tf.nn.bias_add(conv, biases, data_format=util.DATA_FORMAT), name=scope.name)
     pool1 = tf.nn.max_pool(conv1, ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1], padding='VALID',
                            data_format=util.DATA_FORMAT, name='maxpool1')
     with tf.variable_scope('cnn2') as scope:
@@ -86,8 +87,8 @@ def _inference(images, use_cudnn):
         conv = tf.nn.conv2d(pool1, kernel, [1, 1, 1, 1], "VALID", data_format=util.DATA_FORMAT,
                             use_cudnn_on_gpu=use_cudnn)
         biases = util.init_bias([FLAGS.ccn_depth2])
-        bias = tf.nn.bias_add(conv, biases, data_format=util.DATA_FORMAT)
-        conv2 = tf.identity(bias, name=scope.name)
+        # bias = tf.nn.bias_add(conv, biases, data_format=util.DATA_FORMAT)
+        conv2 = tf.identity(tf.nn.bias_add(conv, biases, data_format=util.DATA_FORMAT), name=scope.name)
     pool2 = tf.nn.max_pool(conv2, ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1], padding='VALID',
                            data_format=util.DATA_FORMAT, name='maxpool2')
     with tf.variable_scope('ffn1') as scope:
@@ -148,13 +149,13 @@ def run_training(train_data, num_gpus, use_cudnn):
 '''
 Multi-GPUs
 '''
-def tower_loss(data, scope):
+def tower_loss(data, scope, use_cudnn):
     """Calculate the total loss on a single tower running the CIFAR model.
     """
     images, labels = data.next_batch(FLAGS.batch_size)
 
     # Build inference Graph.
-    logits = _inference(tf.cast(images, util.DTYPE), False)
+    logits = _inference(tf.cast(images, util.DTYPE), use_cudnn)
 
     # Build the portion of the Graph calculating the losses. Note that we will
     # assemble the total_loss using a custom function below.
@@ -244,7 +245,7 @@ def run_multi_training(data, num_gpus, use_cudnn):
                 with tf.name_scope('%s_%d' % (TOWER_NAME, i)) as scope:
 
                     # Calculate the loss for one tower. One model constructed per tower and variables shared across
-                    loss = tower_loss(data, scope)
+                    loss = tower_loss(data, scope, use_cudnn)
 
                     # Reuse variables for the next tower.
                     tf.get_variable_scope().reuse_variables()
@@ -314,7 +315,7 @@ def run_multi_training(data, num_gpus, use_cudnn):
     assert not np.isnan(loss_value), 'Model diverged with loss = NaN'
 
     train_time = time.time() - train_time
-    return sess, train_time, images_placeholder#, labels_placeholder
+    return sess, train_time, images_placeholder, labels_placeholder
 
 
 def run():
