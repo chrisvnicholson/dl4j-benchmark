@@ -103,7 +103,7 @@ def _inference(images, use_cudnn):
     return logits
 
 
-def _setup_loss(logits, labels, core_type="CPU"):
+def _setup_loss(logits, labels):
     """Calculates the loss from the logits and the labels.
     """
     # TODO setup int16 for fp16 if needed
@@ -328,9 +328,9 @@ def run():
     data_load_time = time.time() - data_load_time
 
     num_gpus = util.NUM_GPUS[FLAGS.core_type]
-    use_cudnn = True if (core_type != "CPU") else False
+    use_cudnn = True if (FLAGS.core_type != "CPU") else False
 
-    if core_type != 'MULTI':
+    if FLAGS.core_type != 'MULTI':
         sess, logits, images_placeholder, labels_placeholder, train_time = run_training(data_sets.train, num_gpus, use_cudnn)
     else:
         sess, train_time, images_placeholder, labels_placeholder = run_multi_training(data_sets.train, num_gpus, use_cudnn)
