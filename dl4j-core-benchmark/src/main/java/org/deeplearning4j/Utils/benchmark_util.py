@@ -28,12 +28,11 @@ ch.setFormatter(formatter)
 # add ch to logger
 LOGGER.addHandler(ch)
 
-def load_data(input_data, one_hot, core_type):
+def load_data(input_data, one_hot):
     if(one_hot is False):
         data = input_data.read_data_sets(DATA_DIR)
     else:
         data = input_data.read_data_sets(DATA_DIR, one_hot=True)
-    # if (core_type != "CPU" and not fp16): tf.cast(data.uint8image, tf.float32)
     return data
 
 
@@ -52,8 +51,8 @@ def fill_feed_dict(data_set, images_pl, labels_pl, batch_size):
     images_feed, labels_feed = data_set.next_batch(batch_size)
 
     feed_dict = {
-        images_pl: images_feed,
-        labels_pl: labels_feed,
+        images_pl: tf.cast(images_feed, DTYPE),
+        labels_pl: tf.cast(labels_feed, DTYPE),
     }
     return feed_dict
 

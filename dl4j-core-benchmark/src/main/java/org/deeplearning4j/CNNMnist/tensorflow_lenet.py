@@ -235,11 +235,11 @@ def run_multi_training(data, num_gpus, use_cudnn):
                     images, labels = data.next_batch(FLAGS.batch_size)
 
                     # Build inference Graph.
-                    logits = _inference(images, use_cudnn)
+                    logits = _inference(tf.cast(images, util.DTYPE), use_cudnn)
 
                     # Build the portion of the Graph calculating the losses. Note that we will
                     # assemble the total_loss using a custom function below.
-                    _ = _setup_loss(logits, labels)
+                    _ = _setup_loss(logits, tf.cast(labels, util.DTYPE))
 
                     # Calculate the loss for one tower. One model constructed per tower and variables shared across
                     loss = tower_loss(logits, scope)
@@ -320,23 +320,21 @@ def run(core_type="CPU"):
     total_time = time.time()
 
     data_load_time = time.time()
-    data_sets = util.load_data(input_data, ONE_HOT, core_type)
-    # if core_type == "MULTI": data_sets = tf.split(0, FLAGS.num_gpus, data_sets.train)
+    data_sets = util.load_data(input_data, ONE_HOT)
     data_load_time = time.time() - data_load_time
 
     num_gpus = util.NUM_GPUS[core_type]
     use_cudnn = True if (core_type != "CPU") else False
 
-    data = tf.cast(data_sets.train, util.DTYPE)
     if core_type != 'MULTI':
-        sess, logits, images_placeholder, labels_placeholder, train_time = run_training(data, num_gpus, use_cudnn)
+        sess, logits, images_placeholder, labels_placeholder, train_time = run_training(data_sets.train, num_gpus, use_cudnn)
     else:
-        sess, train_time, images_placeholder, labels_placeholder = run_multi_training(data, num_gpus, use_cudnn)
+        sess, train_time, images_placeholder, labels_placeholder = run_multi_training(data_sets.train, num_gpus, use_cudnn)
         logits = _inference(images_placeholder, use_cudnn)
 
     test_time = time.time()
-    data = tf.cast(data_sets.test, util.DTYPE)
-    util.do_eval(sess, logits, images_placeholder, labels_placeholder, data, ONE_HOT, FLAGS.test_iter, FLAGS.batch_size)
+    data_sets.test
+    util.do_eval(sess, logits, images_placeholder, labels_placeholder, data_sets.test, ONE_HOT, FLAGS.test_iter, FLAGS.batch_size)
     test_time = time.time() - test_time
     sess.close
 
