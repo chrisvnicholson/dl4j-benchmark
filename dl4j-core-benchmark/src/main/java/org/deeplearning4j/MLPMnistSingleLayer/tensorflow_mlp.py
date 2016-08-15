@@ -28,6 +28,7 @@ TOWER_NAME = 'mlp_tower'
 
 FLAGS = tf.app.flags.FLAGS
 # max_iteration = (epochs * numExamples)/batchSize (15 * 60000)/128
+tf.app.flags.DEFINE_string('core_type', 'CPU', 'Directory to put the training data.')
 tf.app.flags.DEFINE_integer('max_iter', 9000, 'Number of iterations to run trainer.')
 tf.app.flags.DEFINE_integer('test_iter', 100, 'Number of iterations to run test.')
 tf.app.flags.DEFINE_integer('hidden1_units', 1000, 'Number of units in hidden layer 1.')
@@ -54,9 +55,9 @@ def _inference(images):
     return logits
 
 
-def run(core_type="CPU"):
+def run():
     total_time = time.time()
-    num_gpus = util.NUM_GPUS[core_type]
+    num_gpus = util.NUM_GPUS[FLAGS.core_type]
 
     data_load_time = time.time()
     # Import data
@@ -102,5 +103,5 @@ def run(core_type="CPU"):
 
 
 if __name__ == "__main__":
-    run(sys.argv[1])
+    run()
 

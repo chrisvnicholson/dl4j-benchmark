@@ -51,8 +51,8 @@ def fill_feed_dict(data_set, images_pl, labels_pl, batch_size):
     images_feed, labels_feed = data_set.next_batch(batch_size)
 
     feed_dict = {
-        images_pl: tf.cast(images_feed, DTYPE),
-        labels_pl: tf.cast(labels_feed, DTYPE),
+        images_pl: images_feed,
+        labels_pl: labels_feed,
     }
     return feed_dict
 

@@ -45,10 +45,11 @@ NUM_EXAMPLES_PER_EPOCH_FOR_EVAL = 10000
 MOVING_AVERAGE_DECAY = 0.9999     # The decay to use for the moving average.
 NUM_EPOCHS_PER_DECAY = 350.0
 
-TOWER_NAME = 'lenet_tower'
+TOWER_NAME = 'tower'
 
 FLAGS = tf.app.flags.FLAGS
 # max_iteration = (epochs * numExamples)/batchSize (11 * 60000)/66
+tf.app.flags.DEFINE_string('core_type', 'CPU', 'Directory to put the training data.')
 tf.app.flags.DEFINE_integer('max_iter', 9000, 'Number of iterations to run trainer.')
 tf.app.flags.DEFINE_integer('test_iter', 100, 'Number of iterations to run trainer.')
 tf.app.flags.DEFINE_integer('ccn_depth1', 20, 'Number of units in feed forward layer 1.')
@@ -76,7 +77,8 @@ def _inference(images, use_cudnn):
         conv = tf.nn.conv2d(images, kernel, [1, 1, 1, 1], "VALID", data_format= util.DATA_FORMAT,
                             use_cudnn_on_gpu=use_cudnn) #VALID no padding
         biases = util.init_bias([FLAGS.ccn_depth1])
-        conv1 = tf.nn.bias_add(conv, biases, name=scope.name, data_format=util.DATA_FORMAT)
+        bias = tf.nn.bias_add(conv, biases, data_format=util.DATA_FORMAT)
+        conv1 = tf.identity(bias, name=scope.name)
     pool1 = tf.nn.max_pool(conv1, ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1], padding='VALID',
                            data_format=util.DATA_FORMAT, name='maxpool1')
     with tf.variable_scope('cnn2') as scope:
@@ -84,7 +86,8 @@ def _inference(images, use_cudnn):
         conv = tf.nn.conv2d(pool1, kernel, [1, 1, 1, 1], "VALID", data_format=util.DATA_FORMAT,
                             use_cudnn_on_gpu=use_cudnn)
         biases = util.init_bias([FLAGS.ccn_depth2])
-        conv2 = tf.nn.bias_add(conv, biases, name=scope.name, data_format=util.DATA_FORMAT)
+        bias = tf.nn.bias_add(conv, biases, data_format=util.DATA_FORMAT)
+        conv2 = tf.identity(bias, name=scope.name)
     pool2 = tf.nn.max_pool(conv2, ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1], padding='VALID',
                            data_format=util.DATA_FORMAT, name='maxpool2')
     with tf.variable_scope('ffn1') as scope:
@@ -103,10 +106,11 @@ def _inference(images, use_cudnn):
 def _setup_loss(logits, labels, core_type="CPU"):
     """Calculates the loss from the logits and the labels.
     """
-    labels = tf.to_int32(labels) if(ONE_HOT is False) else labels
+    # TODO setup int16 for fp16 if needed
+    labels = tf.to_int32(labels) if(ONE_HOT is False and util.DTYPE == tf.float32) else labels
     cross_entropy = tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(logits, labels, name='xentropy') if(ONE_HOT is False) else
                                    tf.nn.softmax_cross_entropy_with_logits(logits, labels, name='xentropy'))
-    if core_type != "MULTI":
+    if FLAGS.core_type != "MULTI":
         tf.scalar_summary(cross_entropy.op.name, cross_entropy)
     else:
         tf.add_to_collection("losses", cross_entropy)
@@ -144,9 +148,17 @@ def run_training(train_data, num_gpus, use_cudnn):
 '''
 Multi-GPUs
 '''
-def tower_loss(logits, scope):
+def tower_loss(data, scope):
     """Calculate the total loss on a single tower running the CIFAR model.
     """
+    images, labels = data.next_batch(FLAGS.batch_size)
+
+    # Build inference Graph.
+    logits = _inference(tf.cast(images, util.DTYPE), False)
+
+    # Build the portion of the Graph calculating the losses. Note that we will
+    # assemble the total_loss using a custom function below.
+    _ = _setup_loss(logits, labels)
 
     # Assemble all of the losses for the current tower only.
     losses = tf.get_collection('losses', scope)
@@ -164,6 +176,7 @@ def tower_loss(logits, scope):
         # Remove 'tower_[0-9]/' from the name in case this is a multi-GPU training
         # session. This helps the clarity of presentation on tensorboard.
         loss_name = re.sub('%s_[0-9]*/' % TOWER_NAME, '', l.op.name)
+
         # Name each loss as '(raw)' and name the moving average version of the loss
         tf.scalar_summary(loss_name +' (raw)', l)
         tf.scalar_summary(loss_name, loss_averages.average(l))
@@ -208,7 +221,7 @@ def run_multi_training(data, num_gpus, use_cudnn):
     with tf.Graph().as_default(), tf.device('/cpu:0'):
         # Create a variable to count the number of train() calls. This equals the
         # number of batches processed * FLAGS.num_gpus.
-        # images_placeholder, labels_placeholder = util.placeholder_inputs(ONE_HOT, IMAGE_PIXELS, NUM_CLASSES)
+        images_placeholder, labels_placeholder = util.placeholder_inputs(ONE_HOT, IMAGE_PIXELS, NUM_CLASSES)
 
         global_step = tf.get_variable('global_step', [],
                                       initializer=tf.constant_initializer(0), trainable=False)
@@ -218,7 +231,7 @@ def run_multi_training(data, num_gpus, use_cudnn):
         decay_steps = int(num_batches_per_epoch * NUM_EPOCHS_PER_DECAY)
 
         # Decay the learning rate exponentially based on the number of steps.
-        lr = tf.train.exponential_decay(FLAGS.learning_rate_decay_factor, # tech initial learning rate higher than standard
+        lr = tf.train.exponential_decay(FLAGS.learning_rate, # tech initial learning rate higher than standard
                                         global_step,
                                         decay_steps,
                                         FLAGS.learning_rate_decay_factor,
@@ -232,19 +245,10 @@ def run_multi_training(data, num_gpus, use_cudnn):
         for i in xrange(num_gpus):
             with tf.device('/gpu:%d' % i):
                 with tf.name_scope('%s_%d' % (TOWER_NAME, i)) as scope:
-                    images, labels = data.next_batch(FLAGS.batch_size)
-
-                    # Build inference Graph.
-                    logits = _inference(tf.cast(images, util.DTYPE), use_cudnn)
-
-                    # Build the portion of the Graph calculating the losses. Note that we will
-                    # assemble the total_loss using a custom function below.
-                    _ = _setup_loss(logits, tf.cast(labels, util.DTYPE))
 
                     # Calculate the loss for one tower. One model constructed per tower and variables shared across
-                    loss = tower_loss(logits, scope)
+                    loss = tower_loss(data, scope)
 
-                    print("TOWER LOSS*******", loss)
                     # Reuse variables for the next tower.
                     tf.get_variable_scope().reuse_variables()
 
@@ -313,17 +317,17 @@ def run_multi_training(data, num_gpus, use_cudnn):
     assert not np.isnan(loss_value), 'Model diverged with loss = NaN'
 
     train_time = time.time() - train_time
-    return sess, train_time, images_placeholder, labels_placeholder
+    return sess, train_time, images_placeholder#, labels_placeholder
 
 
-def run(core_type="CPU"):
+def run():
     total_time = time.time()
 
     data_load_time = time.time()
     data_sets = util.load_data(input_data, ONE_HOT)
     data_load_time = time.time() - data_load_time
 
-    num_gpus = util.NUM_GPUS[core_type]
+    num_gpus = util.NUM_GPUS[FLAGS.core_type]
     use_cudnn = True if (core_type != "CPU") else False
 
     if core_type != 'MULTI':
@@ -347,4 +351,4 @@ def run(core_type="CPU"):
 
 
 if __name__ == "__main__":
-    run(sys.argv[1])
+    run()
