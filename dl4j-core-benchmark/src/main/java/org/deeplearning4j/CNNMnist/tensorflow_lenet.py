@@ -321,11 +321,11 @@ def run_multi_training(data, num_gpus, use_cudnn):
                 summary_str = sess.run(summary_op)
                 summary_writer.add_summary(summary_str, iter)
 
-        checkpoint_path = os.path.join(FLAGS.model_checkpoint_path, 'model.ckpt')
+        checkpoint_path = os.path.join(FLAGS.checkpoint_dir, 'model.ckpt')
         saver.save(sess, checkpoint_path, global_step=FLAGS.max_iter)
 
         train_time = time.time() - train_time
-        return sess, train_time, saver
+        return train_time, saver
 
 
 def run():
@@ -344,16 +344,17 @@ def run():
         util.do_eval(sess, logits, images_placeholder, labels_placeholder, data_sets.test, ONE_HOT, FLAGS.test_iter, FLAGS.batch_size)
         test_time = time.time() - test_time
     else:
-        sess, train_time, saver = run_multi_training(data_sets.train, num_gpus, use_cudnn)
-        # ckpt = tf.train.get_checkpoint_state(FLAGS.checkpoint_dir)
-        # saver.restore(sess, ckpt.model_checkpoint_path)
-        correct_count = 0
-        for _ in xrange(FLAGS.test_iter):
-            images, labels = data_sets.test.next_batch(FLAGS.batch_size)
-            logits = _inference(images, use_cudnn)
-            correct_pred = tf.equal(tf.argmax(logits, 1), tf.argmax(labels, 1))
-            print("CORRECT PRED ****************", correct_pred)
-            correct_count += sess.run(tf.reduce_sum(tf.cast(correct_pred, util.DTYPE), 0))
+        with tf.Session() as sess:
+            train_time, saver = run_multi_training(data_sets.train, num_gpus, use_cudnn)
+            ckpt = tf.train.get_checkpoint_state(FLAGS.checkpoint_dir)
+            saver.restore(sess, ckpt.model_checkpoint_path)
+            correct_count = 0
+            for _ in xrange(FLAGS.test_iter):
+                images, labels = data_sets.test.next_batch(FLAGS.batch_size)
+                logits = _inference(images, use_cudnn)
+                correct_pred = tf.equal(tf.argmax(logits, 1), tf.argmax(labels, 1))
+                print("CORRECT PRED ****************", correct_pred)
+                correct_count += sess.run(tf.reduce_sum(tf.cast(correct_pred, util.DTYPE), 0))
     print("Accuracy: %.2f" % ((correct_count / data_sets.test.num_examples) * 100))
 
     sess.close
