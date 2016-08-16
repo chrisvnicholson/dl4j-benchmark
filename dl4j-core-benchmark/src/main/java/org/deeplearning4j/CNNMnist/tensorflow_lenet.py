@@ -29,7 +29,7 @@ import sys
 from os import path
 sys.path.append( path.dirname( path.dirname( path.abspath(__file__) ) ) )
 import Utils.benchmark_util as util
-import pdb
+import os
 import numpy as np
 
 
@@ -50,7 +50,7 @@ TOWER_NAME = 'lenet_tower'
 FLAGS = tf.app.flags.FLAGS
 # max_iteration = (epochs * numExamples)/batchSize (11 * 60000)/66
 tf.app.flags.DEFINE_string('core_type', 'CPU', 'Directory to put the training data.')
-tf.app.flags.DEFINE_integer('max_iter', 9000, 'Number of iterations to run trainer.')
+tf.app.flags.DEFINE_integer('max_iter', 200, 'Number of iterations to run trainer.')
 tf.app.flags.DEFINE_integer('test_iter', 100, 'Number of iterations to run trainer.')
 tf.app.flags.DEFINE_integer('ccn_depth1', 20, 'Number of units in feed forward layer 1.')
 tf.app.flags.DEFINE_integer('ccn_depth2', 50, 'Number of units in feed forward layer 1.')
@@ -66,6 +66,7 @@ tf.app.flags.DEFINE_float('decay_rate', 1e-3, 'Learning rate decay rate.')
 tf.app.flags.DEFINE_float('policy_power', 0.75, 'Policy power.') # current inverse_time_decay is missing this as part of denom calc
 tf.app.flags.DEFINE_integer('seed', 42, 'Random seed.')
 tf.app.flags.DEFINE_boolean('log_device_placement', False, """Whether to log device placement.""")
+tf.app.flags.DEFINE_string('checkpoint_dir', '/tmp/cifar10_train', """Directory where to read model checkpoints.""")
 
 def _activation_summary(x):
     """Helper to create summaries for activations.
@@ -294,12 +295,14 @@ def run_multi_training(data, num_gpus, use_cudnn):
         # Group all updates to into a single train op.
         train_op = tf.group(apply_gradient_op, variables_averages_op)
 
+        saver = tf.train.Saver(tf.all_variables())
+
         summary_op = tf.merge_summary(summaries)
 
         # Build an initialization operation to run below.
         init = tf.initialize_all_variables()
 
-        sess = tf.Session(config=tf.ConfigProto(
+        sess = tf.InteractiveSession(config=tf.ConfigProto(
                 allow_soft_placement=True,
                 log_device_placement=FLAGS.log_device_placement))
         sess.run(init)
@@ -314,15 +317,15 @@ def run_multi_training(data, num_gpus, use_cudnn):
 
             if iter % 100 == 0: util.LOGGER.debug('Iter %d: loss = %.2f' % (iter, loss_value))
             assert not np.isnan(loss_value), 'Model diverged with loss = NaN'
-
             if iter % 100 == 0:
                 summary_str = sess.run(summary_op)
                 summary_writer.add_summary(summary_str, iter)
 
-    assert not np.isnan(loss_value), 'Model diverged with loss = NaN'
+        checkpoint_path = os.path.join(FLAGS.model_checkpoint_path, 'model.ckpt')
+        saver.save(sess, checkpoint_path, global_step=FLAGS.max_iter)
 
-    train_time = time.time() - train_time
-    return sess, train_time
+        train_time = time.time() - train_time
+        return sess, train_time, saver
 
 
 def run():
@@ -341,16 +344,15 @@ def run():
         util.do_eval(sess, logits, images_placeholder, labels_placeholder, data_sets.test, ONE_HOT, FLAGS.test_iter, FLAGS.batch_size)
         test_time = time.time() - test_time
     else:
-        sess, train_time = run_multi_training(data_sets.train, num_gpus, use_cudnn)
+        sess, train_time, saver = run_multi_training(data_sets.train, num_gpus, use_cudnn)
+        # ckpt = tf.train.get_checkpoint_state(FLAGS.checkpoint_dir)
+        # saver.restore(sess, ckpt.model_checkpoint_path)
         correct_count = 0
-        with tf.Graph().as_default() as g:
-            variable_averages = tf.train.ExponentialMovingAverage(
-                    cifar10.MOVING_AVERAGE_DECAY)
-            variables_to_restore = variable_averages.variables_to_restore()
         for _ in xrange(FLAGS.test_iter):
             images, labels = data_sets.test.next_batch(FLAGS.batch_size)
             logits = _inference(images, use_cudnn)
             correct_pred = tf.equal(tf.argmax(logits, 1), tf.argmax(labels, 1))
+            print("CORRECT PRED ****************", correct_pred)
             correct_count += sess.run(tf.reduce_sum(tf.cast(correct_pred, util.DTYPE), 0))
     print("Accuracy: %.2f" % ((correct_count / data_sets.test.num_examples) * 100))
 
